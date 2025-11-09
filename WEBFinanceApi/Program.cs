@@ -35,42 +35,46 @@ app.MapGet("/api/wallets", () =>
     return Results.Ok(wallets);
 });
 
-app.MapPost("/api/wallets", (List<Wallet> wallets) =>
-{
-    Repo.Save(wallets);
-    return Results.Ok(new { ok = true, count = wallets.Count });
-});
-
-app.MapPost("/api/wallets/create", (Wallet w) =>
+app.MapPost("/api/wallets", (WalletDto dto) =>
 {
     var wallets = Repo.Load();
-    if (w.Id == Guid.Empty) w.Id = Guid.NewGuid();
-    w.Currency = (w.Currency ?? string.Empty).Trim().ToUpperInvariant();
+    var w = new Wallet(dto.Name, dto.Currency, dto.InitialBalance);
     wallets.Add(w);
     Repo.Save(wallets);
     return Results.Ok(w);
 });
 
-app.MapPost("/api/wallets/{id:guid}/transactions", (Guid id, Transaction tx) =>
+
+app.MapPost("/api/wallets/{id:guid}/transactions", (Guid id, TransactionDto dto) =>
 {
     var wallets = Repo.Load();
     var w = wallets.FirstOrDefault(x => x.Id == id);
     if (w is null) return Results.NotFound(new { error = "Wallet not found" });
 
-    if (tx.Id == Guid.Empty) tx.Id = Guid.NewGuid();
-    if (!w.TryAddTransaction(tx, out var err))
-        return Results.BadRequest(new { error = err });
+    var tx = dto.Type == TransactionType.Income
+        ? Transaction.CreateIncome(dto.Date, dto.Amount, dto.Description)
+        : Transaction.CreateExpense(dto.Date, dto.Amount, dto.Description);
+
+    try
+    {
+        w.AddTransaction(tx);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
 
     Repo.Save(wallets);
     return Results.Ok(tx);
 });
 
-app.MapPost("/api/sample", () =>
+app.MapGet("/api/health", () => Results.Ok(new { ok = true, time = DateTime.UtcNow }));
+
+app.MapMethods("/api/sample", new[] { "POST", "GET" }, () =>
 {
     var wallets = Repo.GenerateSample();
-    foreach (var w in wallets) w.Currency = (w.Currency ?? string.Empty).Trim().ToUpperInvariant();
     Repo.Save(wallets);
-    return Results.Ok(new { ok = true, count = wallets.Count });
+    return Results.Ok(wallets);
 });
 
 app.MapGet("/api/report", (int year, int month, string? currency) =>
@@ -123,3 +127,6 @@ app.MapGet("/api/report", (int year, int month, string? currency) =>
 });
 
 app.Run();
+
+public sealed record WalletDto(string Name, string Currency, decimal InitialBalance);
+public sealed record TransactionDto(DateTime Date, decimal Amount, TransactionType Type, string? Description);

@@ -1,18 +1,13 @@
-using System.Text.Json.Serialization;
-
 namespace WEBFinanceApi;
 
 public enum TransactionType { Income, Expense }
 
 public class Transaction
 {
-    public Guid Id { get; set; }
+    public Guid Id { get; set; } = Guid.NewGuid();
     public DateTime Date { get; set; }
     public decimal Amount { get; set; }
-
-    [JsonConverter(typeof(JsonStringEnumConverter))]
     public TransactionType Type { get; set; }
-
     public string Description { get; set; } = string.Empty;
 
     public Transaction() { }
@@ -24,18 +19,22 @@ public class Transaction
         Date = date;
         Amount = amount;
         Type = type;
-        Description = description?.Trim() ?? string.Empty;
+        Description = (description ?? string.Empty).Trim();
     }
+
+    public static Transaction CreateIncome(DateTime date, decimal amount, string? description = "") =>
+        new(date, amount, TransactionType.Income, description ?? "");
+
+    public static Transaction CreateExpense(DateTime date, decimal amount, string? description = "") =>
+        new(date, amount, TransactionType.Expense, description ?? "");
 }
 
 public class Wallet
 {
-    public Guid Id { get; set; }
+    public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = string.Empty;
-    public string Currency { get; set; } = string.Empty;
-
-    public decimal InitialBalance { get; set; } = 0m;
-
+    public string Currency { get; set; } = "RUB";
+    public decimal InitialBalance { get; set; }
     public List<Transaction> Transactions { get; set; } = new();
 
     public Wallet() { }
@@ -44,7 +43,7 @@ public class Wallet
     {
         Id = Guid.NewGuid();
         Name = (name ?? string.Empty).Trim();
-        Currency = (currency ?? string.Empty).Trim().ToUpperInvariant();
+        Currency = (currency ?? "RUB").Trim().ToUpperInvariant();
         InitialBalance = initialBalance;
     }
 
@@ -53,34 +52,13 @@ public class Wallet
         + Transactions.Where(t => t.Type == TransactionType.Income).Sum(t => t.Amount)
         - Transactions.Where(t => t.Type == TransactionType.Expense).Sum(t => t.Amount);
 
-    public bool TryAddTransaction(Transaction tx, out string? error)
+    public void AddTransaction(Transaction tx)
     {
-        error = null;
-        if (tx is null)
-        {
-            error = "Transaction is null";
-            return false;
-        }
-
         if (tx.Type == TransactionType.Expense && tx.Amount > CurrentBalance)
-        {
-            error = $"Недостаточно средств в кошельке '{Name}'. " +
-                    $"Баланс: {CurrentBalance:F2} {Currency}, расход: {tx.Amount:F2} {Currency}";
-            return false;
-        }
-
+            throw new InvalidOperationException($"Недостаточно средств в '{Name}'. Баланс {CurrentBalance:F2} {Currency}, расход {tx.Amount:F2} {Currency}");
         Transactions.Add(tx);
-        return true;
     }
 
     public IEnumerable<Transaction> TransactionsInMonth(int year, int month) =>
         Transactions.Where(t => t.Date.Year == year && t.Date.Month == month);
-
-    public (decimal income, decimal expense) MonthlySums(int year, int month)
-    {
-        var monthTx = TransactionsInMonth(year, month);
-        var income = monthTx.Where(t => t.Type == TransactionType.Income).Sum(t => t.Amount);
-        var expense = monthTx.Where(t => t.Type == TransactionType.Expense).Sum(t => t.Amount);
-        return (income, expense);
-    }
 }

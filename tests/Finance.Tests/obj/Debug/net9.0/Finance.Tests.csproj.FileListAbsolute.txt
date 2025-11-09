@@ -106,3 +106,4 @@
 /Users/kirillko/FinanceAPP/tests/Finance.Tests/obj/Debug/net9.0/Finance.Tests.pdb
 /Users/kirillko/FinanceAPP/tests/Finance.Tests/obj/Debug/net9.0/Finance.Tests.genruntimeconfig.cache
 /Users/kirillko/FinanceAPP/tests/Finance.Tests/obj/Debug/net9.0/ref/Finance.Tests.dll
+/Users/kirillko/FinanceAPP/tests/Finance.Tests/obj/Debug/net9.0/Finance.Tests.sourcelink.json

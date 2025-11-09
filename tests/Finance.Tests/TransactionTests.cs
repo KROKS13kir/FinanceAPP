@@ -2,23 +2,25 @@
 using System.Globalization;
 using FluentAssertions;
 using Xunit;
-using Finance;
+using Finance.Domain.Entities;
+using Finance.Domain.Enums;
+using Finance.Domain.Errors;
 
 namespace Finance.Tests;
 
 public class TransactionTests
 {
     [Fact]
-    public void Ctor_ShouldThrow_WhenAmountNegative()
+    public void Factory_ShouldThrow_WhenAmountNegative()
     {
-        Action act = () => new Transaction(DateTime.Today, -1m, TransactionType.Expense, "bad");
-        act.Should().Throw<ArgumentOutOfRangeException>();
+        Action act = () => Transaction.CreateExpense(DateTime.Today, -1m, "bad");
+        act.Should().Throw<DomainException>();
     }
 
     [Fact]
     public void ToString_ShouldContainKeyParts()
     {
-        var t = new Transaction(new DateTime(2025, 11, 03), 123.45m, TransactionType.Income, "Bonus");
+        var t = Transaction.CreateIncome(new DateTime(2025, 11, 03), 123.45m, "Bonus");
         var s = t.ToString();
         var expectedAmount = t.Amount.ToString("F2", CultureInfo.CurrentCulture);
         s.Should().Contain("2025-11-03")
@@ -30,7 +32,7 @@ public class TransactionTests
     [Fact]
     public void Description_Defaults_ToEmpty()
     {
-        var t = new Transaction(DateTime.Today, 10m, TransactionType.Expense);
+        var t = Transaction.CreateExpense(DateTime.Today, 10m);
         t.Description.Should().BeEmpty();
     }
 }

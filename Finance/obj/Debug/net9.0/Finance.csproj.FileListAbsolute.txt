@@ -12,3 +12,4 @@
 /Users/kirillko/FinanceAPP/Finance/obj/Debug/net9.0/Finance.pdb
 /Users/kirillko/FinanceAPP/Finance/obj/Debug/net9.0/Finance.genruntimeconfig.cache
 /Users/kirillko/FinanceAPP/Finance/obj/Debug/net9.0/ref/Finance.dll
+/Users/kirillko/FinanceAPP/Finance/obj/Debug/net9.0/Finance.sourcelink.json

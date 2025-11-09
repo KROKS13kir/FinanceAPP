@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FluentAssertions;
 using Xunit;
-using Finance;
+using Finance.Domain.Entities;
+using Finance.Domain.Enums;
 
 namespace Finance.Tests;
 
@@ -19,17 +21,10 @@ public class JsonSerializationTests
     [Fact]
     public void Wallet_Roundtrip_SerializesEnumAsString()
     {
-        var w = new Wallet("Карта", "RUB", 1000m);
+        var w = Wallet.Create("Карта", "RUB", 1000m);
 
-        var ok1 = w.TryAddTransaction(
-            new Transaction(new(2025, 11, 3), 500m, TransactionType.Income,  "Зачисление"),
-            out _);
-        var ok2 = w.TryAddTransaction(
-            new Transaction(new(2025, 11, 4), 200m, TransactionType.Expense, "Покупка"),
-            out _);
-
-        ok1.Should().BeTrue();
-        ok2.Should().BeTrue();
+        w.AddTransaction(Transaction.CreateIncome (new(2025, 11, 3), 500m, "Зачисление"));
+        w.AddTransaction(Transaction.CreateExpense(new(2025, 11, 4), 200m, "Покупка"));
 
         var list = new List<Wallet> { w };
 
@@ -48,9 +43,9 @@ public class JsonSerializationTests
         w2.Name.Should().Be("Карта");
         w2.Currency.Should().Be("RUB");
         w2.InitialBalance.Should().Be(1000m);
-        w2.Transactions.Should().HaveCount(2);
-        w2.Transactions[0].Type.Should().Be(TransactionType.Income);
-        w2.Transactions[1].Type.Should().Be(TransactionType.Expense);
+        w2.Transactions.Count.Should().Be(2);
+        w2.Transactions.ElementAt(0).Type.Should().Be(TransactionType.Income);
+        w2.Transactions.ElementAt(1).Type.Should().Be(TransactionType.Expense);
         w2.CurrentBalance.Should().Be(1300m);
     }
 }

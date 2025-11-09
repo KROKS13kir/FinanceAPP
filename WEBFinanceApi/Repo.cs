@@ -21,27 +21,29 @@ public static class Repo
             try
             {
                 if (!File.Exists(FilePath)) return new();
-
                 var txt = File.ReadAllText(FilePath, Encoding.UTF8);
                 var data = JsonSerializer.Deserialize<List<Wallet>>(txt, JsonOptions) ?? new();
 
+                bool changed = false;
                 foreach (var w in data)
                 {
+                    if (w.Id == Guid.Empty) { w.Id = Guid.NewGuid(); changed = true; }
                     w.Name = (w.Name ?? string.Empty).Trim();
-                    w.Currency = (w.Currency ?? string.Empty).Trim().ToUpperInvariant();
-                    if (w.Transactions is { Count: > 0 })
+                    w.Currency = (w.Currency ?? "RUB").Trim().ToUpperInvariant();
+
+                    if (w.Transactions != null)
                     {
                         foreach (var t in w.Transactions)
+                        {
+                            if (t.Id == Guid.Empty) { t.Id = Guid.NewGuid(); changed = true; }
                             t.Description = (t.Description ?? string.Empty).Trim();
+                        }
                     }
                 }
-
+                if (changed) Save(data);
                 return data;
             }
-            catch
-            {
-                return new();
-            }
+            catch { return new(); }
         }
     }
 
@@ -50,17 +52,6 @@ public static class Repo
         lock (_lock)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-
-            foreach (var w in wallets)
-            {
-                w.Name = (w.Name ?? string.Empty).Trim();
-                w.Currency = (w.Currency ?? string.Empty).Trim().ToUpperInvariant();
-                if (w.Transactions is { Count: > 0 })
-                {
-                    foreach (var t in w.Transactions)
-                        t.Description = (t.Description ?? string.Empty).Trim();
-                }
-            }
 
             var tmpPath = FilePath + ".tmp";
             var bakPath = FilePath + ".bak";
@@ -73,7 +64,7 @@ public static class Repo
                 if (File.Exists(FilePath))
                 {
                     File.Replace(tmpPath, FilePath, bakPath, ignoreMetadataErrors: true);
-                    try { if (File.Exists(bakPath)) File.Delete(bakPath); } catch { /* игнор */ }
+                    try { if (File.Exists(bakPath)) File.Delete(bakPath); } catch { }
                 }
                 else
                 {
@@ -82,7 +73,7 @@ public static class Repo
             }
             finally
             {
-                try { if (File.Exists(tmpPath)) File.Delete(tmpPath); } catch { /* игнор */ }
+                try { if (File.Exists(tmpPath)) File.Delete(tmpPath); } catch { }
             }
         }
     }
@@ -96,21 +87,18 @@ public static class Repo
         var now = DateTime.Now;
         int y = now.Year, m = now.Month;
 
-        _ = w1.TryAddTransaction(new Transaction(new DateTime(y, m, 2), 1000m, TransactionType.Income, "Подработка"), out _);
-        _ = w1.TryAddTransaction(new Transaction(new DateTime(y, m, 3), 200m, TransactionType.Expense, "Кофе и перекус"), out _);
-        _ = w1.TryAddTransaction(new Transaction(new DateTime(y, m, 10), 1200m, TransactionType.Expense, "Покупка одежды"), out _);
-        _ = w1.TryAddTransaction(new Transaction(new DateTime(y, Math.Max(1, m - 1), 20), 500m, TransactionType.Expense, "Прошлый месяц трата"), out _);
+        w1.AddTransaction(Transaction.CreateIncome(new DateTime(y, m, 2), 1000m, "Подработка"));
+        w1.AddTransaction(Transaction.CreateExpense(new DateTime(y, m, 3), 200m, "Кофе и перекус"));
+        w1.AddTransaction(Transaction.CreateExpense(new DateTime(y, m, 10), 1200m, "Покупка одежды"));
+        w1.AddTransaction(Transaction.CreateExpense(new DateTime(y, Math.Max(1, m - 1), 20), 500m, "Прошлый месяц трата"));
 
-        _ = w2.TryAddTransaction(new Transaction(new DateTime(y, m, 1), 50000m, TransactionType.Income, "Зарплата"), out _);
-        _ = w2.TryAddTransaction(new Transaction(new DateTime(y, m, 5), 10000m, TransactionType.Expense, "Оплата аренды"), out _);
-        _ = w2.TryAddTransaction(new Transaction(new DateTime(y, m, 20), 8000m, TransactionType.Expense, "Ремонт техники"), out _);
-        _ = w2.TryAddTransaction(new Transaction(new DateTime(y, Math.Max(1, m - 2), 12), 1500m, TransactionType.Expense, "Давняя трата"), out _);
+        w2.AddTransaction(Transaction.CreateIncome(new DateTime(y, m, 1), 50000m, "Зарплата"));
+        w2.AddTransaction(Transaction.CreateExpense(new DateTime(y, m, 5), 10000m, "Оплата аренды"));
+        w2.AddTransaction(Transaction.CreateExpense(new DateTime(y, m, 20), 8000m, "Ремонт техники"));
+        w2.AddTransaction(Transaction.CreateExpense(new DateTime(y, Math.Max(1, m - 2), 12), 1500m, "Давняя трата"));
 
-        _ = w3.TryAddTransaction(new Transaction(new DateTime(y, m, 3), 50m, TransactionType.Income, "Фриланс USD"), out _);
-        _ = w3.TryAddTransaction(new Transaction(new DateTime(y, m, 12), 75m, TransactionType.Expense, "Покупка в магазине"), out _);
-
-        foreach (var w in new[] { w1, w2, w3 })
-            w.Currency = (w.Currency ?? string.Empty).Trim().ToUpperInvariant();
+        w3.AddTransaction(Transaction.CreateIncome(new DateTime(y, m, 3), 50m, "Фриланс USD"));
+        w3.AddTransaction(Transaction.CreateExpense(new DateTime(y, m, 12), 75m, "Покупка в магазине"));
 
         return new List<Wallet> { w1, w2, w3 };
     }

@@ -1,8 +1,9 @@
 <script setup>
 import { reactive, ref, computed, watch, onMounted } from 'vue'
-import { api } from './api.js'
+import { api, API_BASE } from './api.js'
 
 const TxType = { Income: 'Income', Expense: 'Expense' }
+const today = () => new Date().toISOString().slice(0, 10)
 const fmtDate = s => (s ? String(s).slice(0, 10) : '')
 
 const state = reactive({
@@ -14,37 +15,59 @@ const state = reactive({
   error: ''
 })
 
+function normalizeWallet (w) {
+  return {
+    id: w.id ?? w.Id,
+    name: (w.name ?? w.Name ?? '').trim(),
+    currency: (w.currency ?? w.Currency ?? '').trim().toUpperCase(),
+    initialBalance: Number(w.initialBalance ?? w.InitialBalance ?? 0),
+    currentBalance: w.currentBalance ?? w.CurrentBalance,
+    transactions: Array.isArray(w.transactions ?? w.Transactions) ? (w.transactions ?? w.Transactions) : []
+  }
+}
+
 const currencyOptions = computed(() =>
-  Array.from(new Set(state.wallets.map(w => (w.currency || '').trim()).filter(Boolean))).sort()
+  Array.from(
+    new Set(state.wallets.map(w => (w.currency || '').trim().toUpperCase()).filter(Boolean))
+  ).sort()
 )
 
 function currentBalance (wallet) {
-  const inc = wallet.transactions.filter(t => t.type === TxType.Income).reduce((s, t) => s + Number(t.amount), 0)
-  const exp = wallet.transactions.filter(t => t.type === TxType.Expense).reduce((s, t) => s + Number(t.amount), 0)
-  return Number(wallet.initialBalance) + inc - exp
+  const inc = (wallet.transactions || [])
+    .filter(t => (t.type ?? t.Type) === 'Income')
+    .reduce((s, t) => s + Number(t.amount ?? t.Amount ?? 0), 0)
+  const exp = (wallet.transactions || [])
+    .filter(t => (t.type ?? t.Type) === 'Expense')
+    .reduce((s, t) => s + Number(t.amount ?? t.Amount ?? 0), 0)
+  return Number(wallet.initialBalance || 0) + inc - exp
 }
+
 
 async function loadWallets () {
   state.loading = true; state.error = ''
   try {
-    state.wallets = await api.getWallets()
+    const raw = await api.getWallets()
+    state.wallets = (Array.isArray(raw) ? raw : []).map(normalizeWallet)
   } catch (e) {
     state.error = 'Не удалось загрузить кошельки: ' + (e?.message ?? e)
   } finally { state.loading = false }
 }
-onMounted(loadWallets)
+onMounted(() => {
+  console.log('API_BASE =', API_BASE)
+  loadWallets()
+})
 
 const newWallet = reactive({ name: '', currency: 'RUB', initialBalance: 0 })
 async function addWallet () {
   if (!newWallet.name.trim()) return
+  state.error = ''
   try {
     const created = await api.createWallet({
       name: newWallet.name.trim(),
-      currency: newWallet.currency.trim() || 'RUB',
-      initialBalance: Number(newWallet.initialBalance) || 0,
-      transactions: []
+      currency: (newWallet.currency || 'RUB').trim(),
+      initialBalance: Number(newWallet.initialBalance) || 0
     })
-    state.wallets.push(created)
+    state.wallets.push(normalizeWallet(created))
     Object.assign(newWallet, { name: '', currency: 'RUB', initialBalance: 0 })
   } catch (e) {
     state.error = 'Не удалось добавить кошелёк: ' + (e?.message ?? e)
@@ -53,56 +76,53 @@ async function addWallet () {
 
 const txForm = reactive({
   walletId: '',
-  date: new Date().toISOString().slice(0, 10),
+  date: today(),
   type: TxType.Expense,
   amount: '',
   description: ''
 })
 const txError = ref('')
+const txSubmitting = ref(false)
 
-async function submitTx () {
+async function submitTx() {
   txError.value = ''
   if (!txForm.walletId) { txError.value = 'Выберите кошелёк'; return }
-  const wallet = state.wallets.find(w => w.id === txForm.walletId)
-  if (!wallet) { txError.value = 'Wallet not found'; return }
 
+  await loadWallets()
+
+  const wallet = state.wallets.find(w => w.id === txForm.walletId)
+  if (!wallet) { txError.value = 'Выбранный кошелёк не найден (обновите страницу)'; return }
+
+  const amount = Number(txForm.amount)
+  if (!Number.isFinite(amount) || amount <= 0) { txError.value = 'Сумма должна быть > 0'; return }
+
+  txSubmitting.value = true
   try {
     const created = await api.addTx(wallet.id, {
-      date: txForm.date || new Date().toISOString().slice(0, 10),
-      amount: Number(txForm.amount || 0),
+      date: txForm.date || today(),
+      amount,
       type: txForm.type,
       description: (txForm.description || '').trim()
     })
-    wallet.transactions.push(created)
-    Object.assign(txForm, {
-      walletId: wallet.id,
-      date: new Date().toISOString().slice(0, 10),
-      type: TxType.Expense,
-      amount: '',
-      description: ''
-    })
+    wallet.transactions.push({
+      id: created.id ?? created.Id,
+      date: created.date ?? created.Date,
+      amount: Number(created.amount ?? created.Amount ?? 0),
+      type: created.type ?? created.Type,
+      description: created.description ?? created.Description ?? ''
+    });
+    wallet.currentBalance = currentBalance(wallet);
+    await loadReport();
+    Object.assign(txForm, { walletId: wallet.id, date: today(), type: TxType.Expense, amount: '', description: '' })
   } catch (e) {
-    txError.value = 'Не удалось добавить транзакцию: ' + (e?.message ?? e)
+    txError.value = `Не удалось добавить транзакцию: ${e?.error ?? e?.message ?? 'Ошибка сети'}`
+  } finally {
+    txSubmitting.value = false
   }
 }
 
 const reportServer = ref(null)
 const reportLoading = ref(false)
-
-async function loadReport () {
-  if (!state.reportYm) { reportServer.value = null; return }
-  const [year, month] = state.reportYm.split('-').map(Number)
-  reportLoading.value = true
-  try {
-    const raw = await api.getReport(year, month, state.reportCurrency.trim() || undefined)
-    reportServer.value = normalizeReport(raw)
-  } catch (e) {
-    reportServer.value = null
-    state.error = 'Не удалось загрузить отчёт: ' + (e?.message ?? e)
-  } finally { reportLoading.value = false }
-}
-watch(() => [state.reportYm, state.reportCurrency], loadReport)
-onMounted(loadReport)
 
 function normalizeReport (r) {
   if (!r) return null
@@ -112,7 +132,7 @@ function normalizeReport (r) {
       date: it.date ?? it.Date,
       amount: Number(it.amount ?? it.Amount ?? 0),
       walletName: it.walletName ?? it.WalletName ?? '',
-      currency: it.currency ?? it.Currency ?? '', 
+      currency: it.currency ?? it.Currency ?? '',
       description: it.description ?? it.Description ?? ''
     }))
     return {
@@ -139,47 +159,48 @@ function normalizeReport (r) {
   return { year: r.year ?? r.Year, month: r.month ?? r.Month, groups, topByWallet }
 }
 
-function downloadJson () {
-  const data = JSON.stringify(state.wallets, null, 2)
-  const blob = new Blob([data], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = Object.assign(document.createElement('a'), { href: url, download: 'finance.json' })
-  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url)
+async function loadReport () {
+  if (!state.reportYm) { reportServer.value = null; return }
+  const [year, month] = state.reportYm.split('-').map(Number)
+  reportLoading.value = true
+  try {
+    const raw = await api.getReport(year, month, state.reportCurrency.trim() || undefined)
+    reportServer.value = normalizeReport(raw)
+  } catch (e) {
+    reportServer.value = null
+    state.error = 'Не удалось загрузить отчёт: ' + (e?.message ?? e)
+  } finally { reportLoading.value = false }
 }
 
-const importInput = ref(null)
-function openImport () { importInput.value?.click() }
-async function onImportJson (e) {
-  const file = e.target?.files?.[0]
-  if (!file) return
-  const reader = new FileReader()
-  reader.onload = async () => {
-    try {
-      const text = String(reader.result ?? '')
-      const parsed = JSON.parse(text)
-      if (Array.isArray(parsed)) {
-        await api.setWallets(parsed)
-        await Promise.all([loadWallets(), loadReport()])
-      } else {
-        alert('Ожидается массив кошельков')
-      }
-    } catch (err) {
-      alert('Ошибка импорта: ' + (err?.message ?? err))
-    } finally {
-      e.target.value = ''
-    }
+let reportTimer
+watch(() => [state.reportYm, state.reportCurrency], () => {
+  clearTimeout(reportTimer)
+  reportTimer = setTimeout(loadReport, 300)
+})
+onMounted(loadReport)
+
+function downloadJson () {
+  try {
+    const data = JSON.stringify(state.wallets, null, 2)
+    const blob = new Blob([data], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = Object.assign(document.createElement('a'), { href: url, download: 'finance.json' })
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url)
+  } catch (e) {
+    state.error = 'Экспорт не удался: ' + (e?.message ?? e)
   }
-  reader.readAsText(file, 'utf-8')
 }
 
 async function generateSample () {
+  state.error = '';
   try {
-    await api.generateSample()
-    await Promise.all([loadWallets(), loadReport()])
+    state.wallets = await api.generateSample();
+    await loadReport();
   } catch (e) {
-    state.error = 'Не удалось сгенерировать данные: ' + (e?.message ?? e)
+    state.error = `Не удалось сгенерировать данные: ${e?.message ?? e}`;
   }
 }
+
 </script>
 
 <template>
@@ -191,6 +212,7 @@ async function generateSample () {
         <span v-if="state.error" class="alert">{{ state.error }}</span>
       </div>
     </header>
+
     <div class="panel">
       <div class="actions-grid">
         <button class="btn btn--primary btn--block" @click="generateSample">Сгенерировать данные</button>
@@ -229,9 +251,9 @@ async function generateSample () {
           <span class="badge">ID: {{ (w.id ?? '').toString().slice(0,8) }}</span>
           <span class="badge">Валюта: {{ w.currency }}</span>
           <span class="badge ok">Баланс: {{ currentBalance(w).toFixed(2) }} {{ w.currency }}</span>
-          <span class="small muted">{{ w.transactions?.length ?? 0 }} транзакций</span>
+          <span class="small muted">{{ (w.transactions?.length ?? 0) }} транзакций</span>
           <button class="btn btn--ghost btn--sm wallet-toggle"
-            @click="state.ui.expanded[w.id] = !state.ui.expanded[w.id]">
+                  @click="state.ui.expanded[w.id] = !state.ui.expanded[w.id]">
             {{ state.ui.expanded[w.id] ? 'Скрыть' : 'Показать' }} транзакции
           </button>
         </div>
@@ -247,9 +269,9 @@ async function generateSample () {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="t in [...(w.transactions||[])].sort((a,b)=> new Date(a.date)-new Date(b.date))" :key="t.id">
+              <tr v-for="t in [...(w.transactions||[])].sort((a,b)=> new Date(a.date||0)-new Date(b.date||0))" :key="t.id">
                 <td>{{ fmtDate(t.date) }}</td>
-                <td><span :class="['badge', t.type===TxType.Income?'ok':'warn']">{{ t.type }}</span></td>
+                <td><span :class="['badge', (t.type===TxType.Income || t.type==='Income') ? 'ok':'warn']">{{ t.type }}</span></td>
                 <td class="right">{{ Number(t.amount).toFixed(2) }} {{ w.currency }}</td>
                 <td>{{ t.description || '—' }}</td>
               </tr>
@@ -258,6 +280,7 @@ async function generateSample () {
         </div>
       </div>
     </section>
+
     <section class="panel">
       <div class="section-title">Новая транзакция</div>
       <div class="grid">
@@ -295,14 +318,16 @@ async function generateSample () {
         </div>
 
         <div class="col-12">
-          <button class="btn btn--primary btn--block" @click="submitTx"
-            :disabled="!txForm.walletId || Number(txForm.amount) <= 0">
-            Добавить транзакцию
+          <button class="btn btn--primary btn--block"
+                  @click="submitTx"
+                  :disabled="txSubmitting || !txForm.walletId || Number(txForm.amount) <= 0">
+            {{ txSubmitting ? 'Добавляем…' : 'Добавить транзакцию' }}
           </button>
           <span v-if="txError" class="alert">{{ txError }}</span>
         </div>
       </div>
     </section>
+
     <section class="panel">
       <div class="section-title">Отчёт за месяц</div>
       <div class="filters-grid">
@@ -359,15 +384,13 @@ async function generateSample () {
             <div v-for="b in reportServer.topByWallet" :key="b.wallet.id" class="panel card">
               <div class="card-head">
                 <strong>{{ b.wallet.name }}</strong>
-                <span class="badge">Баланс: {{ Number(b.wallet.currentBalance).toFixed(2) }} {{ b.wallet.currency
-                  }}</span>
+                <span class="badge">Баланс: {{ Number(b.wallet.currentBalance).toFixed(2) }} {{ b.wallet.currency }}</span>
               </div>
               <div class="card-body">
                 <div v-if="!b.top.length" class="small">Нет расходов.</div>
                 <ol v-else class="report-list">
                   <li v-for="t in b.top" :key="t.id">
-                    {{ fmtDate(t.date) }} — {{ Number(t.amount).toFixed(2) }} {{ b.wallet.currency }} — {{ t.description
-                    || '—' }}
+                    {{ fmtDate(t.date) }} — {{ Number(t.amount).toFixed(2) }} {{ b.wallet.currency }} — {{ t.description || '—' }}
                   </li>
                 </ol>
               </div>
